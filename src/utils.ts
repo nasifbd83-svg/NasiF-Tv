@@ -74,7 +74,12 @@ export function parseM3U(m3uText: string): Channel[] {
         "duronto", "t sports", "nagorik", "bd", "bangladesh", "dhaka"
       ];
 
-      if (kolkataKeywords.some(kw => lowerName.includes(kw))) {
+      // Detect if channel has "IN" at the front of its name (e.g. "IN | Star Plus", "[IN] Zee Cinema", "IN Zee Cafe")
+      const startsWithIN = /^(in\b|\[in\]|in\s*[\-|:\]/\\_])/i.test(name.trim());
+
+      if (startsWithIN) {
+        detectedGroup = "Kolkata";
+      } else if (kolkataKeywords.some(kw => lowerName.includes(kw))) {
         detectedGroup = "Kolkata";
       } else if (bdKeywords.some(kw => lowerName.includes(kw))) {
         detectedGroup = "Bangladesh";
