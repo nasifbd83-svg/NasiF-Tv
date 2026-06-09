@@ -97,26 +97,72 @@ export default function App() {
     setConnectionStatus("fetching");
     setImportError(null);
     try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`System returned status: ${response.status}`);
-      }
-      const rawText = await response.text();
-      const parsed = parseM3U(rawText);
+      if (url === DEFAULT_M3U_URL) {
+        const SPORTS_M3U_URL = "https://raw.githubusercontent.com/SHAJON-404/iptv/refs/heads/main/app/data/sports.m3u";
+        
+        let banglaText = "";
+        let sportsText = "";
+        
+        const [banglaRes, sportsRes] = await Promise.all([
+          fetch(DEFAULT_M3U_URL),
+          fetch(SPORTS_M3U_URL).catch(e => {
+            console.error("Failed to fetch sports m3u", e);
+            return null;
+          })
+        ]);
 
-      if (parsed && parsed.length > 0) {
-        setChannels(parsed);
-        setPlaylistUrl(url);
-        // Automatically start with BTV if available, otherwise the first channel
-        const btvChannel = parsed.find(
-          (c) => c.name.trim().toLowerCase() === "btv"
-        ) || parsed.find(
-          (c) => c.name.toLowerCase().includes("btv")
-        ) || parsed[0];
-        setActiveChannel(btvChannel);
-        setConnectionStatus("connected");
+        if (banglaRes.ok) {
+          banglaText = await banglaRes.text();
+        } else {
+          throw new Error(`Primary playlist returned status: ${banglaRes.status}`);
+        }
+
+        if (sportsRes && sportsRes.ok) {
+          sportsText = await sportsRes.text();
+        }
+
+        const seenNames = new Set<string>();
+        const parsedBangla = parseM3U(banglaText, undefined, seenNames);
+        const parsedSports = sportsText ? parseM3U(sportsText, "Sports", seenNames) : [];
+
+        const combined = [...parsedBangla, ...parsedSports];
+
+        if (combined && combined.length > 0) {
+          setChannels(combined);
+          setPlaylistUrl(url);
+          // Automatically start with BTV if available, otherwise the first channel
+          const btvChannel = combined.find(
+            (c) => c.name.trim().toLowerCase() === "btv"
+          ) || combined.find(
+            (c) => c.name.toLowerCase().includes("btv")
+          ) || combined[0];
+          setActiveChannel(btvChannel);
+          setConnectionStatus("connected");
+        } else {
+          throw new Error("No channels detected in standard M3U format.");
+        }
       } else {
-        throw new Error("No channels detected in standard M3U format.");
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`System returned status: ${response.status}`);
+        }
+        const rawText = await response.text();
+        const parsed = parseM3U(rawText);
+
+        if (parsed && parsed.length > 0) {
+          setChannels(parsed);
+          setPlaylistUrl(url);
+          // Automatically start with BTV if available, otherwise the first channel
+          const btvChannel = parsed.find(
+            (c) => c.name.trim().toLowerCase() === "btv"
+          ) || parsed.find(
+            (c) => c.name.toLowerCase().includes("btv")
+          ) || parsed[0];
+          setActiveChannel(btvChannel);
+          setConnectionStatus("connected");
+        } else {
+          throw new Error("No channels detected in standard M3U format.");
+        }
       }
     } catch (error) {
       console.error("CORS block or fetch issue on github playlist, loading fallback channels", error);
@@ -168,32 +214,14 @@ export default function App() {
 
   // Derive unique categories from active channel list
   const categories = useMemo(() => {
-    return ["All", "Bangladesh", "Kolkata", "Favs", "Recents"];
+    return ["All", "Bangladesh", "Kolkata", "Sports"];
   }, []);
 
   // Filter channels based on Search Query and Selected Tab / Category
   const activeFilteredChannels = useMemo(() => {
-    // If Recents tab is active, order them in the order they were watched rather than playlist index
-    if (activeTab === "Recents") {
-      const rawRecents = recents
-        .map(id => channels.find(c => c.id === id))
-        .filter((c): c is Channel => !!c);
-      
-      if (searchQuery.trim() !== "") {
-        const q = searchQuery.toLowerCase();
-        return rawRecents.filter(c => 
-          c.name.toLowerCase().includes(q) || 
-          (c.group && c.group.toLowerCase().includes(q))
-        );
-      }
-      return rawRecents;
-    }
-
     return channels.filter((c) => {
       // Tab Category filter
-      if (activeTab === "Favs") {
-        if (!favorites.includes(c.id)) return false;
-      } else if (activeTab !== "All") {
+      if (activeTab !== "All") {
         if (c.group !== activeTab) return false;
       }
 
@@ -207,7 +235,7 @@ export default function App() {
 
       return true;
     });
-  }, [channels, activeTab, favorites, recents, searchQuery]);
+  }, [channels, activeTab, searchQuery]);
 
   // Navigation Arrows click controllers
   const playNext = useCallback(() => {
@@ -407,7 +435,9 @@ export default function App() {
       </div>
 
       {/* 3. Main Container Stack (Centered stack below the header) */}
-      <main className="flex-1 w-full max-w-[850px] mx-auto px-4 flex flex-col gap-5">
+      <main className={`flex-1 w-full mx-auto flex flex-col gap-5 transition-all duration-500 ease-out ${
+        isTheaterMode ? "max-w-full px-0" : "max-w-[850px] px-4"
+      }`}>
         
         {/* A. Live Video Player centered */}
         <section id="player-view-section" className="w-full">
@@ -422,185 +452,168 @@ export default function App() {
           />
         </section>
 
-        {/* B. Full-width, pill-shaped dark input search bar */}
-        <section id="search-bar-section" className="w-full">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-550" />
-            <input
-              id="search-input"
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search channel lists..."
-              className="w-full bg-[#0F1115] hover:bg-[#121419] border border-white/[0.04] focus:border-purple-500/50 rounded-full pl-11 pr-10 py-3.5 text-sm text-white placeholder-stone-550 focus:outline-none focus:ring-2 focus:ring-purple-750/10 transition-all duration-300 shadow-inner"
-            />
-            {searchQuery && (
-              <button
-                _onClick={() => setSearchQuery("")}
-                onClick={() => setSearchQuery("")}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white cursor-pointer hover:bg-white/5 rounded-full p-0.5"
-                title="Clear Search"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </section>
-
-        {/* C. Horizontal Scrolling Filter Tabs */}
-        <section id="filter-tabs-section" className="w-full overflow-hidden">
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 cursor-grab active:cursor-grabbing scroll-smooth">
-            {categories.map((tab) => {
-              // Custom human-friendly label mapping for standard tabs
-              let tabLabel = tab;
-              let itemCount = 0;
-              
-              if (tab === "All") {
-                tabLabel = `All (${channels.length})`;
-                itemCount = channels.length;
-              } else if (tab === "Favs") {
-                tabLabel = `Favs (${favorites.length})`;
-                itemCount = favorites.length;
-              } else if (tab === "Recents") {
-                tabLabel = `Recents (${recents.length})`;
-                itemCount = recents.length;
-              } else {
-                const count = channels.filter(c => c.group === tab).length;
-                tabLabel = `${tab} (${count})`;
-                itemCount = count;
-              }
-
-              // Do not show categories that have 0 entries (except Favs, Recents, All, Bangladesh & Kolkata which are always visible)
-              if (itemCount === 0 && tab !== "Favs" && tab !== "Recents" && tab !== "All" && tab !== "Bangladesh" && tab !== "Kolkata") {
-                return null;
-              }
-
-              const isActive = activeTab === tab;
-
-              return (
+        {/* Centralised contents wrapper for Theater Mode to keep grid, tabs and search centered */}
+        <div className={`w-full mx-auto flex flex-col gap-5 ${isTheaterMode ? "max-w-[850px] px-4" : ""}`}>
+          {/* B. Full-width, pill-shaped dark input search bar */}
+          <section id="search-bar-section" className="w-full">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-550" />
+              <input
+                id="search-input"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search channel lists..."
+                className="w-full bg-[#0F1115] hover:bg-[#121419] border border-white/[0.04] focus:border-purple-500/50 rounded-full pl-11 pr-10 py-3.5 text-sm text-white placeholder-stone-550 focus:outline-none focus:ring-2 focus:ring-purple-750/10 transition-all duration-300 shadow-inner"
+              />
+              {searchQuery && (
                 <button
-                  key={tab}
-                  onClick={() => {
-                    setActiveTab(tab);
-                  }}
-                  className={`flex-shrink-0 px-5 py-2.5 rounded-full text-xs font-semibold tracking-wide transition-all duration-300 border cursor-pointer ${
-                    isActive
-                      ? "bg-[#7B2CBF] border-[#7B2CBF] text-white shadow-lg shadow-purple-900/25 scale-[1.03]"
-                      : "bg-[#121415]/60 hover:bg-[#16191b] text-stone-400 hover:text-stone-100 border-white/[0.04]"
-                  }`}
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white cursor-pointer hover:bg-white/5 rounded-full p-0.5"
+                  title="Clear Search"
                 >
-                  {tabLabel}
+                  <X className="w-4 h-4" />
                 </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* D. Responsive Channel Grid directory */}
-        <section id="channels-grid-section" className="w-full mt-1.5 flex-1">
-          {isLoading ? (
-            <div className="py-24 flex flex-col items-center justify-center text-center gap-3">
-              <div className="relative flex items-center justify-center w-12 h-12">
-                <div className="absolute inset-0 w-full h-full border-2 border-t-purple-600 border-white/5 rounded-full animate-spin"></div>
-              </div>
-              <p className="text-xs text-stone-400 font-sans">
-                Reading and parsing M3U streaming playlist indexes...
-              </p>
+              )}
             </div>
-          ) : activeFilteredChannels.length > 0 ? (
-            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-              {activeFilteredChannels.map((channel) => {
-                const isPlayingCard = activeChannel?.id === channel.id;
+          </section>
+
+          {/* C. Horizontal Scrolling Filter Tabs */}
+          <section id="filter-tabs-section" className="w-full overflow-hidden">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 cursor-grab active:cursor-grabbing scroll-smooth">
+              {categories.map((tab) => {
+                // Custom human-friendly label mapping for standard tabs
+                let tabLabel = tab;
+                const count = tab === "All" ? channels.length : channels.filter(c => c.group === tab).length;
+                tabLabel = `${tab} (${count})`;
+
+                const isActive = activeTab === tab;
 
                 return (
-                  <div
-                    key={channel.id}
-                    onClick={async () => {
-                      if (channel.isTSports) {
-                        try {
-                          const res = await fetch("https://raw.githubusercontent.com/byte-capsule/TSports-m3u8-Grabber/main/TSports_m3u8_headers.Json");
-                          if (res.ok) {
-                            const data = await res.json();
-                            if (data && data.channels && data.channels[0]) {
-                              const updatedChannel = {
-                                ...channel,
-                                streamUrl: data.channels[0].link || channel.streamUrl,
-                                headers: data.channels[0].headers || undefined
-                              };
-                              setActiveChannel(updatedChannel);
-                              addToRecents(channel.id);
-                              return;
-                            }
-                          }
-                        } catch (err) {
-                          console.error("Error fetching T Sports config on click:", err);
-                        }
-                      }
-                      setActiveChannel(channel);
-                      addToRecents(channel.id);
+                  <button
+                    key={tab}
+                    onClick={() => {
+                      setActiveTab(tab);
                     }}
-                    className={`relative flex flex-col items-center justify-between p-4 bg-[#12141C] border rounded-2xl cursor-pointer transition-all duration-300 aspect-square text-center select-none ${
-                      isPlayingCard
-                        ? "border-[#7B2CBF] bg-[#7B2CBF]/5 shadow-[0_0_15px_rgba(123,44,191,0.25)] scale-[1.02]"
-                        : "border-white/[0.04] hover:bg-[#161a26]/75 hover:border-white/10"
+                    className={`flex-shrink-0 px-5 py-2.5 rounded-full text-xs font-semibold tracking-wide transition-all duration-300 border cursor-pointer ${
+                      isActive
+                        ? "bg-[#7B2CBF] border-[#7B2CBF] text-white shadow-lg shadow-purple-900/25 scale-[1.03]"
+                        : "bg-[#121415]/60 hover:bg-[#16191b] text-stone-400 hover:text-stone-100 border-white/[0.04]"
                     }`}
                   >
-                    {/* Centered Logo Box (with white background) */}
-                    <div className="w-14 h-14 bg-white rounded-xl flex items-center justify-center p-1.5 overflow-hidden shadow-inner shrink-0 mt-1">
-                      {channel.logo ? (
-                        <img
-                          src={channel.logo}
-                          alt={channel.name}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-contain"
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = "none";
-                            const parent = (e.target as HTMLElement).parentElement;
-                            if (parent && !parent.querySelector(".fallback-text")) {
-                              const fallbackText = document.createElement("span");
-                              fallbackText.className = "fallback-text text-purple-600 font-extrabold text-xs tracking-wider";
-                              fallbackText.innerText = getInitials(channel.name);
-                              parent.appendChild(fallbackText);
-                            }
-                          }}
-                        />
-                      ) : (
-                        <span className="fallback-text text-[#7B2CBF] font-extrabold text-xs tracking-wider">
-                          {getInitials(channel.name)}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* M3U Category tags indicator / Active tag dot */}
-                    {isPlayingCard && (
-                      <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_6px_#a855f7]" />
-                    )}
-
-                    {/* Channel name printed in white text at the bottom */}
-                    <div className="w-full mt-2">
-                      <p className="text-[12px] font-semibold text-white truncate w-full tracking-wide leading-tight">
-                        {channel.name}
-                      </p>
-                    </div>
-                  </div>
+                    {tabLabel}
+                  </button>
                 );
               })}
             </div>
-          ) : (
-            <div className="py-20 bg-[#12141C]/60 border border-white/[0.04] rounded-2xl text-center p-6 flex flex-col items-center justify-center">
-              <div className="p-3 bg-stone-950 border border-stone-850 rounded-full mb-3 text-stone-600">
-                <Search className="w-6 h-6 text-purple-500/70" />
+          </section>
+
+          {/* D. Responsive Channel Grid directory */}
+          <section id="channels-grid-section" className="w-full mt-1.5 flex-1">
+            {isLoading ? (
+              <div className="py-24 flex flex-col items-center justify-center text-center gap-3">
+                <div className="relative flex items-center justify-center w-12 h-12">
+                  <div className="absolute inset-0 w-full h-full border-2 border-t-purple-600 border-white/5 rounded-full animate-spin"></div>
+                </div>
+                <p className="text-xs text-stone-400 font-sans">
+                  Reading and parsing M3U streaming playlist indexes...
+                </p>
               </div>
-              <h5 className="text-sm font-semibold text-stone-300">
-                No IPTV Stations Detected
-              </h5>
-              <p className="text-xs text-stone-500 mt-1 max-w-sm leading-relaxed">
-                No stations match active category search query. Try typing something else or click <strong>Reset Playlist</strong> in the load drawer menu at the top.
-              </p>
-            </div>
-          )}
-        </section>
+            ) : activeFilteredChannels.length > 0 ? (
+              <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+                {activeFilteredChannels.map((channel) => {
+                  const isPlayingCard = activeChannel?.id === channel.id;
+
+                  return (
+                    <div
+                      key={channel.id}
+                      onClick={async () => {
+                        if (channel.isTSports) {
+                          try {
+                            const res = await fetch("https://raw.githubusercontent.com/byte-capsule/TSports-m3u8-Grabber/main/TSports_m3u8_headers.Json");
+                            if (res.ok) {
+                              const data = await res.json();
+                              if (data && data.channels && data.channels[0]) {
+                                const updatedChannel = {
+                                  ...channel,
+                                  streamUrl: data.channels[0].link || channel.streamUrl,
+                                  headers: data.channels[0].headers || undefined
+                                };
+                                setActiveChannel(updatedChannel);
+                                addToRecents(channel.id);
+                                return;
+                              }
+                            }
+                          } catch (err) {
+                            console.error("Error fetching T Sports config on click:", err);
+                          }
+                        }
+                        setActiveChannel(channel);
+                        addToRecents(channel.id);
+                      }}
+                      className={`relative flex flex-col items-center justify-between p-4 bg-[#12141C] border rounded-2xl cursor-pointer transition-all duration-300 aspect-square text-center select-none ${
+                        isPlayingCard
+                          ? "border-[#7B2CBF] bg-[#7B2CBF]/5 shadow-[0_0_15px_rgba(123,44,191,0.25)] scale-[1.02]"
+                          : "border-white/[0.04] hover:bg-[#161a26]/75 hover:border-white/10"
+                      }`}
+                    >
+                      {/* Centered Logo Box (with white background) */}
+                      <div className="w-14 h-14 bg-white rounded-xl flex items-center justify-center p-1.5 overflow-hidden shadow-inner shrink-0 mt-1">
+                        {channel.logo ? (
+                          <img
+                            src={channel.logo}
+                            alt={channel.name}
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-contain"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                              const parent = (e.target as HTMLElement).parentElement;
+                              if (parent && !parent.querySelector(".fallback-text")) {
+                                const fallbackText = document.createElement("span");
+                                fallbackText.className = "fallback-text text-purple-600 font-extrabold text-xs tracking-wider";
+                                fallbackText.innerText = getInitials(channel.name);
+                                parent.appendChild(fallbackText);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <span className="fallback-text text-[#7B2CBF] font-extrabold text-xs tracking-wider">
+                            {getInitials(channel.name)}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* M3U Category tags indicator / Active tag dot */}
+                      {isPlayingCard && (
+                        <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_6px_#a855f7]" />
+                      )}
+
+                      {/* Channel name printed in white text at the bottom */}
+                      <div className="w-full mt-2">
+                        <p className="text-[12px] font-semibold text-white truncate w-full tracking-wide leading-tight">
+                          {channel.name}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-20 bg-[#12141C]/60 border border-white/[0.04] rounded-2xl text-center p-6 flex flex-col items-center justify-center">
+                <div className="p-3 bg-stone-950 border border-stone-850 rounded-full mb-3 text-stone-600">
+                  <Search className="w-6 h-6 text-purple-500/70" />
+                </div>
+                <h5 className="text-sm font-semibold text-stone-300">
+                  No IPTV Stations Detected
+                </h5>
+                <p className="text-xs text-stone-500 mt-1 max-w-sm leading-relaxed">
+                  No stations match active category search query. Try typing something else or click <strong>Reset Playlist</strong> in the load drawer menu at the top.
+                </p>
+              </div>
+            )}
+          </section>
+        </div>
 
       </main>
 

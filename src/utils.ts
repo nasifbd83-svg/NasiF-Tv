@@ -25,10 +25,9 @@ export function getAttributeValue(line: string, attrName: string): string {
 /**
  * Parses an M3U playlist text structure into a Channel array.
  */
-export function parseM3U(m3uText: string): Channel[] {
+export function parseM3U(m3uText: string, defaultGroupOverride?: string, seenNames: Set<string> = new Set()): Channel[] {
   const channels: Channel[] = [];
   const lines = m3uText.split(/\r?\n/);
-  const seenNames = new Set<string>();
   
   let currentChannel: Partial<Channel> = {};
   let indexCounter = 0;
@@ -58,49 +57,51 @@ export function parseM3U(m3uText: string): Channel[] {
       }
 
       // Smart classification into Bangladesh or Kolkata
-      const lowerName = name.toLowerCase();
-      let detectedGroup = "Bangladesh"; // standard default
+      let detectedGroup = defaultGroupOverride || "Bangladesh"; // standard default
 
-      const kolkataKeywords = [
-        "jalsha", "zee bangla", "colors bangla", "sony aath", "sun bangla", "rupashi", "akash aath", 
-        "news18 bangla", "abp ananda", "24 ghanta", "calcutta", "kolkata", "tara muzik", "sangeet bangla", 
-        "star j", "starj", "zee b", "zeeb", "colors b", "colorsb", "tv9", "tv 9", "r plus", "rplus", "r-plus"
-      ];
+      if (!defaultGroupOverride) {
+        const lowerName = name.toLowerCase();
+        const kolkataKeywords = [
+          "jalsha", "zee bangla", "colors bangla", "sony aath", "sun bangla", "rupashi", "akash aath", 
+          "news18 bangla", "abp ananda", "24 ghanta", "calcutta", "kolkata", "tara muzik", "sangeet bangla", 
+          "star j", "starj", "zee b", "zeeb", "colors b", "colorsb", "tv9", "tv 9", "r plus", "rplus", "r-plus"
+        ];
 
-      const bdKeywords = [
-        "somoy", "jamuna", "independent", "rtv", "ntv", "atn", "channel i", "ekattor", "71", "deepto", 
-        "gtv", "gazi", "btv", "sangsad", "banglavision", "maasranga", "news 24", "dbc", "ekushey", 
-        "etv", "desh", "mohona", "asian", "sa tv", "channel 9", "bijoy", "mytv", "boishakhi", 
-        "duronto", "t sports", "nagorik", "bd", "bangladesh", "dhaka"
-      ];
+        const bdKeywords = [
+          "somoy", "jamuna", "independent", "rtv", "ntv", "atn", "channel i", "ekattor", "71", "deepto", 
+          "gtv", "gazi", "btv", "sangsad", "banglavision", "maasranga", "news 24", "dbc", "ekushey", 
+          "etv", "desh", "mohona", "asian", "sa tv", "channel 9", "bijoy", "mytv", "boishakhi", 
+          "duronto", "t sports", "nagorik", "bd", "bangladesh", "dhaka"
+        ];
 
-      // Detect if channel has "IN" at the front of its name (e.g. "IN | Star Plus", "[IN] Zee Cinema", "IN Zee Cafe")
-      const startsWithIN = /^(in\b|\[in\]|in\s*[\-|:\]/\\_])/i.test(name.trim());
+        // Detect if channel has "IN" at the front of its name (e.g. "IN | Star Plus", "[IN] Zee Cinema", "IN Zee Cafe")
+        const startsWithIN = /^(in\b|\[in\]|in\s*[\-|:\]/\\_])/i.test(name.trim());
 
-      if (startsWithIN) {
-        detectedGroup = "Kolkata";
-      } else if (kolkataKeywords.some(kw => lowerName.includes(kw))) {
-        detectedGroup = "Kolkata";
-      } else if (bdKeywords.some(kw => lowerName.includes(kw))) {
-        detectedGroup = "Bangladesh";
-      } else if (
-        countryCode === "BD" || 
-        groupTitle.includes("bangladesh") || 
-        groupTitle.includes("bd") || 
-        groupTitle.includes("dhaka")
-      ) {
-        detectedGroup = "Bangladesh";
-      } else if (
-        countryCode === "IN" || 
-        groupTitle.includes("kolkata") || 
-        groupTitle.includes("west bengal") || 
-        groupTitle.includes("wb") || 
-        groupTitle.includes("india") || 
-        groupTitle.includes("indian")
-      ) {
-        detectedGroup = "Kolkata";
-      } else {
-        detectedGroup = "Bangladesh";
+        if (startsWithIN) {
+          detectedGroup = "Kolkata";
+        } else if (kolkataKeywords.some(kw => lowerName.includes(kw))) {
+          detectedGroup = "Kolkata";
+        } else if (bdKeywords.some(kw => lowerName.includes(kw))) {
+          detectedGroup = "Bangladesh";
+        } else if (
+          countryCode === "BD" || 
+          groupTitle.includes("bangladesh") || 
+          groupTitle.includes("bd") || 
+          groupTitle.includes("dhaka")
+        ) {
+          detectedGroup = "Bangladesh";
+        } else if (
+          countryCode === "IN" || 
+          groupTitle.includes("kolkata") || 
+          groupTitle.includes("west bengal") || 
+          groupTitle.includes("wb") || 
+          groupTitle.includes("india") || 
+          groupTitle.includes("indian")
+        ) {
+          detectedGroup = "Kolkata";
+        } else {
+          detectedGroup = "Bangladesh";
+        }
       }
 
       currentChannel.name = name;
@@ -127,15 +128,18 @@ export function parseM3U(m3uText: string): Channel[] {
     (c) => c.name.trim().toLowerCase() !== "t sports"
   );
 
-  cleanChannels.push({
-    id: "manual-tsports",
-    name: "T Sports",
-    logo: "https://raw.githubusercontent.com/SHAJON-404/iptv/refs/heads/main/app/data/logos/tsports.png",
-    streamUrl: "https://live.tsports.com/mobile_hls/tsports_live_1/playlist.m3u8",
-    group: "Bangladesh",
-    rawIndex: indexCounter++,
-    isTSports: true
-  });
+  if (!seenNames.has("T Sports")) {
+    seenNames.add("T Sports");
+    cleanChannels.push({
+      id: "manual-tsports",
+      name: "T Sports",
+      logo: "https://raw.githubusercontent.com/SHAJON-404/iptv/refs/heads/main/app/data/logos/tsports.png",
+      streamUrl: "https://live.tsports.com/mobile_hls/tsports_live_1/playlist.m3u8",
+      group: "Sports",
+      rawIndex: indexCounter++,
+      isTSports: true
+    });
+  }
 
   return cleanChannels;
 }
@@ -189,7 +193,7 @@ export const FALLBACK_CHANNELS: Channel[] = [
     name: "T Sports",
     logo: "https://raw.githubusercontent.com/SHAJON-404/iptv/refs/heads/main/app/data/logos/tsports.png",
     streamUrl: "https://live.tsports.com/mobile_hls/tsports_live_1/playlist.m3u8",
-    group: "Bangladesh",
+    group: "Sports",
     isTSports: true
   }
 ];

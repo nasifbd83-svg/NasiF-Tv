@@ -18,7 +18,8 @@ import {
   Flame,
   Maximize2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Settings
 } from "lucide-react";
 
 interface VideoPlayerProps {
@@ -52,6 +53,50 @@ export default function VideoPlayer({
   const [errorText, setErrorText] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
   
+  // Custom YouTube-like features states
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [seekOverlay, setSeekOverlay] = useState<{ show: boolean; text: string; side: "left" | "right" }>({
+    show: false,
+    text: "",
+    side: "left"
+  });
+  const [clickTimeout, setClickTimeout] = useState<number | null>(null);
+
+  // Video Fit Mode: "contain" (Fit), "fill" (Stretch), "cover" (Zoom/Crop)
+  const [fitMode, setFitMode] = useState<"contain" | "fill" | "cover">("contain");
+
+  const toggleFitMode = () => {
+    setFitMode((prev) => {
+      let nextMode: "contain" | "fill" | "cover" = "contain";
+      if (prev === "contain") {
+        nextMode = "fill";
+      } else if (prev === "fill") {
+        nextMode = "cover";
+      } else {
+        nextMode = "contain";
+      }
+
+      // Display beautiful feedback overlay
+      setSeekOverlay({
+        show: true,
+        text: nextMode === "contain" ? "Fit (Original)" : nextMode === "fill" ? "Stretch (Full)" : "Zoom (Crop)",
+        side: "right"
+      });
+
+      setTimeout(() => {
+        setSeekOverlay((curr) => {
+          if (curr.text.includes("Fit") || curr.text.includes("Stretch") || curr.text.includes("Zoom")) {
+            return { ...curr, show: false };
+          }
+          return curr;
+        });
+      }, 1000);
+
+      return nextMode;
+    });
+  };
+
   // Advanced realtime stream stats
   const [stats, setStats] = useState({
     resolution: "Auto",
@@ -61,6 +106,14 @@ export default function VideoPlayer({
   });
 
   const controlsTimeoutRef = useRef<number | null>(null);
+
+  // Keyboard controls & click timeouts cleanup
+  useEffect(() => {
+    return () => {
+      if (clickTimeout) window.clearTimeout(clickTimeout);
+      if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current);
+    };
+  }, [clickTimeout]);
 
   // Handle stream loading and Hls playback
   useEffect(() => {
@@ -96,6 +149,7 @@ export default function VideoPlayer({
         const onLoadedMetadata = () => {
           if (!active) return;
           setIsLoading(false);
+          video.playbackRate = playbackRate; // Restore chosen speed
           video.play()
             .then(() => setIsPlaying(true))
             .catch((err) => {
@@ -151,6 +205,7 @@ export default function VideoPlayer({
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!active) return;
           setIsLoading(false);
+          video.playbackRate = playbackRate; // Restore chosen speed
           video.play()
             .then(() => setIsPlaying(true))
             .catch((err) => {
@@ -215,7 +270,7 @@ export default function VideoPlayer({
 
     let cleanupFn: (() => void) | undefined;
 
-    if (channel.isTSports) {
+    if (channel?.isTSports) {
       // Dynamic grabber fetching
       fetch("https://raw.githubusercontent.com/byte-capsule/TSports-m3u8-Grabber/main/TSports_m3u8_headers.Json")
         .then((res) => {
@@ -238,7 +293,7 @@ export default function VideoPlayer({
             cleanupFn = startPlayback(channel.streamUrl);
           }
         });
-    } else {
+    } else if (channel) {
       cleanupFn = startPlayback(channel.streamUrl);
     }
 
@@ -253,6 +308,14 @@ export default function VideoPlayer({
       }
     };
   }, [channel]);
+
+  // Sync playbackRate when it changes
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      video.playbackRate = playbackRate;
+    }
+  }, [playbackRate]);
 
   // Monitor buffering stats periodically
   useEffect(() => {
@@ -305,20 +368,39 @@ export default function VideoPlayer({
     }
   };
 
+  // Sync last non-zero active volume level to restore on unmute
+  const lastActiveVolume = useRef(volume > 0 ? volume : 0.8);
+
+  const updateVolume = (val: number) => {
+    const rounded = Math.round(val * 100) / 100;
+    const clamped = Math.max(0, Math.min(1, rounded));
+    setVolume(clamped);
+    if (clamped > 0) {
+      setIsMuted(false);
+      lastActiveVolume.current = clamped;
+    } else {
+      setIsMuted(true);
+    }
+  };
+
   // Toggle custom mute states
   const toggleMute = () => {
-    setIsMuted(!isMuted);
+    if (isMuted) {
+      setIsMuted(false);
+      if (volume <= 0) {
+        const restoreVal = lastActiveVolume.current > 0 ? lastActiveVolume.current : 0.8;
+        setVolume(restoreVal);
+        lastActiveVolume.current = restoreVal;
+      }
+    } else {
+      setIsMuted(true);
+    }
   };
 
   // Handle custom volume slider changes
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
-    setVolume(val);
-    if (val > 0) {
-      setIsMuted(false);
-    } else {
-      setIsMuted(true);
-    }
+    updateVolume(val);
   };
 
   // Toggle fullscreen mode targeting container element (so controls stay overlaid!)
@@ -337,35 +419,52 @@ export default function VideoPlayer({
     }
   };
 
-  // Listen to fullscreen changes outside standard triggers
-  useEffect(() => {
-    const handleFsChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-    document.addEventListener("fullscreenchange", handleFsChange);
-    return () => document.removeEventListener("fullscreenchange", handleFsChange);
-  }, []);
+  // Seek forward or rewind by 10s
+  const triggerSeek = (side: "left" | "right") => {
+    const video = videoRef.current;
+    if (!video) return;
 
-  // Hide controls on inactivity
-  const handleMouseMove = () => {
-    setShowControls(true);
-    if (controlsTimeoutRef.current) {
-      window.clearTimeout(controlsTimeoutRef.current);
+    if (side === "right") {
+      video.currentTime = Math.min(video.duration || 999999, video.currentTime + 10);
+      setSeekOverlay({ show: true, text: "+10s", side: "right" });
+    } else {
+      video.currentTime = Math.max(0, video.currentTime - 10);
+      setSeekOverlay({ show: true, text: "-10s", side: "left" });
     }
-    controlsTimeoutRef.current = window.setTimeout(() => {
-      if (isPlaying && !errorText) {
-        setShowControls(false);
-      }
-    }, 3000);
+
+    // Hide seek overlay after 800ms
+    setTimeout(() => {
+      setSeekOverlay(prev => ({ ...prev, show: false }));
+    }, 800);
   };
 
-  useEffect(() => {
-    return () => {
-      if (controlsTimeoutRef.current) {
-        window.clearTimeout(controlsTimeoutRef.current);
-      }
-    };
-  }, []);
+  // Double click / double tap handler on video layout
+  const handleVideoClickOrTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const width = rect.width;
+    const isRightSide = clickX > width / 2;
+    const side = isRightSide ? "right" : "left";
+
+    if (clickTimeout) {
+      window.clearTimeout(clickTimeout);
+      setClickTimeout(null);
+      triggerSeek(side);
+    } else {
+      const timeout = window.setTimeout(() => {
+        setClickTimeout(null);
+        togglePlay();
+      }, 250);
+      setClickTimeout(timeout);
+    }
+  };
+
+  // Handle speed rate update
+  const handleSpeedChange = (rate: number) => {
+    setPlaybackRate(rate);
+    setShowSettingsMenu(false);
+  };
 
   // Forced stream reload action
   const handleReloadStream = () => {
@@ -394,10 +493,33 @@ export default function VideoPlayer({
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsLoading(false);
+          video.playbackRate = playbackRate;
           video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
         });
       }
     }, 200);
+  };
+
+  // Listen to fullscreen changes outside standard triggers
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleFsChange);
+    return () => document.removeEventListener("fullscreenchange", handleFsChange);
+  }, []);
+
+  // Hide controls on inactivity
+  const handleMouseMove = () => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) {
+      window.clearTimeout(controlsTimeoutRef.current);
+    }
+    controlsTimeoutRef.current = window.setTimeout(() => {
+      if (isPlaying && !errorText && !showSettingsMenu) {
+        setShowControls(false);
+      }
+    }, 3000);
   };
 
   // Keyboard controls listener
@@ -425,13 +547,25 @@ export default function VideoPlayer({
           e.preventDefault();
           onToggleTheaterMode();
           break;
+        case "z":
+          e.preventDefault();
+          toggleFitMode();
+          break;
+        case "arrowleft":
+          e.preventDefault();
+          triggerSeek("left");
+          break;
+        case "arrowright":
+          e.preventDefault();
+          triggerSeek("right");
+          break;
         case "arrowup":
           e.preventDefault();
-          setVolume(prev => Math.min(1, prev + 0.1));
+          updateVolume(volume + 0.1);
           break;
         case "arrowdown":
           e.preventDefault();
-          setVolume(prev => Math.max(0, prev - 0.1));
+          updateVolume(volume - 0.1);
           break;
       }
     };
@@ -446,24 +580,56 @@ export default function VideoPlayer({
       <div 
         ref={containerRef}
         id="video-player-container"
-        className={`relative aspect-video w-full overflow-hidden bg-stone-950 rounded-2xl group transition-all duration-500 shadow-2xl border border-white/5 ${
-          isFullscreen ? "rounded-none max-w-full h-screen" : ""
+        className={`relative aspect-video w-full overflow-hidden bg-stone-950 group transition-all duration-500 shadow-2xl border border-white/5 ${
+          isFullscreen ? "rounded-none max-w-full h-screen" : isTheaterMode ? "rounded-none max-w-full" : "rounded-2xl"
         }`}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => isPlaying && setShowControls(false)}
+        onMouseLeave={() => isPlaying && !showSettingsMenu && setShowControls(false)}
       >
         {/* Core HTML5 Video Element */}
         <video
           ref={videoRef}
           id="main-channel-video"
-          className="w-full h-full object-contain cursor-pointer"
-          onClick={togglePlay}
+          className={`w-full h-full transition-all duration-300 ${
+            fitMode === "contain" 
+              ? "object-contain" 
+              : fitMode === "fill" 
+                ? "object-fill" 
+                : "object-cover"
+          }`}
           playsInline
         />
 
+        {/* Double-tap / Seek Gesture Invisible Active overlay regions (leaves room for the bottom bar) */}
+        {!isLoading && !errorText && (
+          <div 
+            className="absolute top-0 left-0 right-0 bottom-16 z-10 flex cursor-pointer"
+            onClick={handleVideoClickOrTap}
+          >
+            <div id="seek-left-target" className="w-1/2 h-full" />
+            <div id="seek-right-target" className="w-1/2 h-full" />
+          </div>
+        )}
+
+        {/* Double-tap visual seek overlays / ripples */}
+        {seekOverlay.show && (
+          <div 
+            className={`absolute top-1/2 -translate-y-1/2 bg-black/60 backdrop-blur-md w-20 h-20 rounded-full flex flex-col items-center justify-center border border-white/10 shadow-2xl pointer-events-none z-30 transition-all duration-300 animate-pulse ${
+              seekOverlay.side === "left" ? "left-[15%]" : "right-[15%]"
+            }`}
+          >
+            {seekOverlay.side === "left" ? (
+              <ChevronLeft className="w-7 h-7 text-white animate-bounce" />
+            ) : (
+              <ChevronRight className="w-7 h-7 text-white animate-bounce" />
+            )}
+            <span className="text-[10px] font-sans font-extrabold text-white mt-0.5 tracking-wider">{seekOverlay.text}</span>
+          </div>
+        )}
+
         {/* Loading Overlay Spinner */}
         {isLoading && !errorText && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0B0C10]/90 backdrop-blur-sm z-20">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0B0C10]/95 backdrop-blur-sm z-20">
             <div className="relative flex items-center justify-center w-16 h-16">
               <div className="absolute inset-0 w-full h-full border-t-2 border-r-2 border-purple-600 rounded-full animate-spin"></div>
               <Tv className="w-6 h-6 text-purple-500 animate-pulse" />
@@ -486,7 +652,7 @@ export default function VideoPlayer({
             <p className="text-sm font-sans text-stone-400 max-w-md mb-6 leading-relaxed">
               {errorText}
             </p>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3_">
               <button
                 id="btn-retry-stream"
                 onClick={handleReloadStream}
@@ -499,7 +665,7 @@ export default function VideoPlayer({
           </div>
         )}
 
-        {/* Live Badge Overlay */}
+        {/* Live Badge Overlay - Top Right */}
         {channel && !errorText && (
           <div className="absolute top-4 right-4 bg-red-650/90 text-white font-mono text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider z-20 flex items-center gap-1.5 shadow-md">
             <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
@@ -508,7 +674,7 @@ export default function VideoPlayer({
         )}
 
         {/* Custom Navigation Arrows overlaid on the sides of the video */}
-        {onPlayPrev && (
+        {onPlayPrev && !isFullscreen && (
           <button 
             onClick={(e) => { e.stopPropagation(); onPlayPrev(); }}
             className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-purple-600 text-white p-2 md:p-3 rounded-full backdrop-blur-sm border border-white/10 hover:border-purple-500/50 transition-all duration-300 z-20 shadow-lg hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center"
@@ -518,7 +684,7 @@ export default function VideoPlayer({
           </button>
         )}
 
-        {onPlayNext && (
+        {onPlayNext && !isFullscreen && (
           <button 
             onClick={(e) => { e.stopPropagation(); onPlayNext(); }}
             className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-purple-600 text-white p-2 md:p-3 rounded-full backdrop-blur-sm border border-white/10 hover:border-purple-500/50 transition-all duration-300 z-20 shadow-lg hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center"
@@ -528,41 +694,132 @@ export default function VideoPlayer({
           </button>
         )}
 
-        {/* Floating Custom Controller Bar at Bottom Center */}
-        {/* Visible on hover or when controls are active */}
+        {/* Smooth integrated Auto-hiding Bottom Control Bar */}
         <div 
-          className={`absolute bottom-4 left-1/2 -translate-x-1/2 bg-stone-950/75 backdrop-blur-md px-6 py-2.5 rounded-full flex items-center justify-center border border-white/10 shadow-2xl select-none z-20 gap-6 transition-all duration-300 ${
-            showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3 pointer-events-none"
+          className={`absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/95 via-black/75 to-transparent flex items-end px-4 pb-3 select-none z-20 transition-all duration-300 ${
+            showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 pointer-events-none"
           }`}
+          onClick={(e) => e.stopPropagation()}
         >
-          {/* Mute toggle button */}
-          <button 
-            id="btn-volume-floating"
-            onClick={(e) => { e.stopPropagation(); toggleMute(); }}
-            className="text-stone-300 hover:text-purple-400 transition-colors p-1 cursor-pointer flex items-center justify-center"
-            title={isMuted ? "Unmute" : "Mute"}
-          >
-            {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-          </button>
+          <div className="w-full flex items-center justify-between">
+            {/* Left Hand Controls Side */}
+            <div className="flex items-center gap-4">
+              {/* Play / Pause toggle */}
+              <button 
+                onClick={togglePlay}
+                className="text-stone-100 hover:text-purple-400 p-1 transition-colors cursor-pointer flex items-center justify-center"
+                title={isPlaying ? "Pause (space)" : "Play (space)"}
+              >
+                {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
+              </button>
 
-          {/* Auto Quality Status badge */}
-          <div className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.1] px-3.5 py-1 rounded-full text-xs font-semibold text-stone-200 border border-white/5 transition duration-150">
-            <span className="w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7] animate-pulse" />
-            <span className="font-mono text-[10px] tracking-wide text-stone-300">Auto {stats.resolution !== "Auto" ? `(${stats.resolution})` : ""}</span>
+              {/* Mute and Volume slider row */}
+              <div className="flex items-center gap-1.5 group/volume">
+                <button 
+                  onClick={toggleMute}
+                  className="text-stone-100 hover:text-purple-400 p-1 transition-colors cursor-pointer flex items-center justify-center"
+                  title={isMuted ? "Unmute (m)" : "Mute (m)"}
+                >
+                  {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                </button>
+                <input 
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={isMuted ? 0 : volume}
+                  onChange={handleVolumeChange}
+                  className="w-16 md:w-0 md:group-hover/volume:w-16 md:focus/volume:w-16 h-1 bg-stone-700 rounded-lg appearance-none cursor-pointer transition-all duration-300 accent-purple-500 hover:accent-purple-400 focus:outline-none"
+                />
+              </div>
+
+              {/* Live Info badge */}
+              <div className="flex items-center gap-1.5 pl-1.5 border-l border-white/10 ml-1">
+                <span className="w-2 h-2 rounded-full bg-red-650 animate-pulse shadow-[0_0_6px_#ef4444]" />
+                <span className="font-mono text-[9px] font-bold text-red-500 uppercase tracking-widest leading-none">LIVE</span>
+                <span className="font-mono text-[10px] tracking-wide text-stone-300 font-semibold ml-1 bg-white/[0.04] px-2 py-0.5 rounded">
+                  Auto {stats.resolution !== "Auto" ? `(${stats.resolution})` : ""}
+                </span>
+                {channel && (
+                  <span className="text-xs text-stone-300 truncate max-w-[130px] sm:max-w-[200px] font-semibold tracking-wide ml-2 hidden md:inline">
+                    {channel.name}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Right Hand Controls Side */}
+            <div className="flex items-center gap-4 relative">
+              {/* Playback speed Gear icon */}
+              <div className="relative">
+                <button 
+                  onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+                  className={`text-stone-100 hover:text-purple-400 p-1 transition-all duration-300 flex items-center justify-center cursor-pointer ${
+                    showSettingsMenu ? "rotate-45 text-purple-400" : ""
+                  }`}
+                  title="Playback Speed Settings"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+
+                {/* Dropup Playback rate speed settings selector */}
+                {showSettingsMenu && (
+                  <div className="absolute right-0 bottom-full mb-3 bg-[#0B0C10]/95 border border-white/10 rounded-xl p-1.5 w-32 shadow-2xl z-30 backdrop-blur-md flex flex-col gap-0.5">
+                    <p className="text-[9px] font-mono font-bold text-stone-400 px-2 py-1 uppercase tracking-widest border-b border-white/[0.06] mb-1">
+                      Speed Rate
+                    </p>
+                    {[0.5, 1, 1.5, 2].map((rate) => (
+                      <button
+                        key={rate}
+                        onClick={() => handleSpeedChange(rate)}
+                        className={`text-left text-xs px-2 py-1.5 rounded-lg transition duration-150 flex items-center justify-between font-medium cursor-pointer ${
+                          playbackRate === rate 
+                            ? "bg-purple-600/20 text-purple-300 font-bold" 
+                            : "text-stone-300 hover:bg-white/5 hover:text-white"
+                        }`}
+                      >
+                        <span>{rate === 1 ? "Normal" : `${rate}x`}</span>
+                        {playbackRate === rate && <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Video Zoom Toggle */}
+              <button
+                onClick={toggleFitMode}
+                className={`text-stone-100 hover:text-purple-400 p-1.5 rounded transition-all duration-300 flex items-center justify-center cursor-pointer ${
+                  fitMode !== "contain" ? "text-purple-400 scale-105" : ""
+                }`}
+                title={`Video Size: ${fitMode === "contain" ? "Default [Fit]" : fitMode === "fill" ? "Stretch [Full]" : "Zoom [Crop]"} (z)`}
+              >
+                <Maximize2 className="w-5 h-5" />
+              </button>
+
+              {/* Theater Mode Toggle */}
+              <button
+                onClick={onToggleTheaterMode}
+                className={`text-stone-100 hover:text-purple-400 p-1 rounded transition-colors flex items-center justify-center cursor-pointer ${
+                  isTheaterMode ? "text-purple-400" : ""
+                }`}
+                title="Theater Mode (t)"
+              >
+                <Tv className="w-5 h-5" />
+              </button>
+
+              {/* Fullscreen Toggle */}
+              <button
+                onClick={toggleFullscreen}
+                className="text-stone-100 hover:text-purple-400 p-1 transition-colors flex items-center justify-center cursor-pointer"
+                title="Fullscreen (f)"
+              >
+                {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
-
-          {/* Fullscreen toggle button */}
-          <button
-            id="btn-fullscreen-floating"
-            onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
-            className="text-stone-300 hover:text-purple-400 transition-colors p-1 cursor-pointer flex items-center justify-center"
-            title="Toggle Fullscreen"
-          >
-            {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-          </button>
         </div>
       </div>
-
     </div>
   );
 }
