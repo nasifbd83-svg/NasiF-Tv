@@ -1,0 +1,6 @@
+{
+  "name": "Nasif Live TV",
+  "description": "A high-performance cinematic IPTV streaming application for Bangladeshi and regional live television channels, featuring smooth HLS native playback, smart parsing, and group filtering.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
