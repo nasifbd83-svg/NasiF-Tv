@@ -18,8 +18,7 @@ import {
   Flame,
   Maximize2,
   ChevronLeft,
-  ChevronRight,
-  Settings
+  ChevronRight
 } from "lucide-react";
 
 interface VideoPlayerProps {
@@ -52,10 +51,9 @@ export default function VideoPlayer({
   const [isLoading, setIsLoading] = useState(true);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
+  const [hasClickedPlayOverlay, setHasClickedPlayOverlay] = useState(false);
   
   // Custom YouTube-like features states
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [seekOverlay, setSeekOverlay] = useState<{ show: boolean; text: string; side: "left" | "right" }>({
     show: false,
     text: "",
@@ -124,6 +122,7 @@ export default function VideoPlayer({
     setIsLoading(true);
     setErrorText(null);
     setIsPlaying(false);
+    setHasClickedPlayOverlay(false);
 
     let active = true;
 
@@ -149,13 +148,7 @@ export default function VideoPlayer({
         const onLoadedMetadata = () => {
           if (!active) return;
           setIsLoading(false);
-          video.playbackRate = playbackRate; // Restore chosen speed
-          video.play()
-            .then(() => setIsPlaying(true))
-            .catch((err) => {
-              console.log("Autoplay blocked:", err);
-              setIsPlaying(false);
-            });
+          setIsPlaying(false);
         };
 
         const onError = () => {
@@ -205,13 +198,7 @@ export default function VideoPlayer({
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!active) return;
           setIsLoading(false);
-          video.playbackRate = playbackRate; // Restore chosen speed
-          video.play()
-            .then(() => setIsPlaying(true))
-            .catch((err) => {
-              console.log("Autoplay blocked:", err);
-              setIsPlaying(false);
-            });
+          setIsPlaying(false);
         });
 
         hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
@@ -309,14 +296,6 @@ export default function VideoPlayer({
     };
   }, [channel]);
 
-  // Sync playbackRate when it changes
-  useEffect(() => {
-    const video = videoRef.current;
-    if (video) {
-      video.playbackRate = playbackRate;
-    }
-  }, [playbackRate]);
-
   // Monitor buffering stats periodically
   useEffect(() => {
     const interval = setInterval(() => {
@@ -353,10 +332,25 @@ export default function VideoPlayer({
     }
   }, [volume, isMuted]);
 
+  const handleStartPlayback = () => {
+    setHasClickedPlayOverlay(true);
+    const video = videoRef.current;
+    if (video) {
+      video.play()
+        .then(() => setIsPlaying(true))
+        .catch(err => console.log("Failed to play on overlay click:", err));
+    }
+  };
+
   // Toggle play states
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
+
+    if (!hasClickedPlayOverlay) {
+      handleStartPlayback();
+      return;
+    }
 
     if (isPlaying) {
       video.pause();
@@ -460,12 +454,6 @@ export default function VideoPlayer({
     }
   };
 
-  // Handle speed rate update
-  const handleSpeedChange = (rate: number) => {
-    setPlaybackRate(rate);
-    setShowSettingsMenu(false);
-  };
-
   // Forced stream reload action
   const handleReloadStream = () => {
     if (!channel) return;
@@ -493,7 +481,6 @@ export default function VideoPlayer({
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsLoading(false);
-          video.playbackRate = playbackRate;
           video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
         });
       }
@@ -516,7 +503,7 @@ export default function VideoPlayer({
       window.clearTimeout(controlsTimeoutRef.current);
     }
     controlsTimeoutRef.current = window.setTimeout(() => {
-      if (isPlaying && !errorText && !showSettingsMenu) {
+      if (isPlaying && !errorText) {
         setShowControls(false);
       }
     }, 3000);
@@ -584,13 +571,15 @@ export default function VideoPlayer({
           isFullscreen ? "rounded-none max-w-full h-screen" : isTheaterMode ? "rounded-none max-w-full" : "rounded-2xl"
         }`}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => isPlaying && !showSettingsMenu && setShowControls(false)}
+        onMouseLeave={() => isPlaying && setShowControls(false)}
       >
         {/* Core HTML5 Video Element */}
         <video
           ref={videoRef}
           id="main-channel-video"
-          className={`w-full h-full transition-all duration-300 ${
+          className={`w-full h-full transition-all duration-700 ease-out ${
+            !hasClickedPlayOverlay ? "filter blur-md brightness-50 scale-[1.02]" : "filter blur-0 brightness-100 scale-100"
+          } ${
             fitMode === "contain" 
               ? "object-contain" 
               : fitMode === "fill" 
@@ -599,6 +588,25 @@ export default function VideoPlayer({
           }`}
           playsInline
         />
+
+        {/* Centered Popup Play button overlay */}
+        {!hasClickedPlayOverlay && channel && !errorText && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/45 z-30 transition-all duration-500">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleStartPlayback();
+              }}
+              className="group relative flex items-center justify-center w-24 h-24 rounded-full bg-purple-600 hover:bg-purple-700 text-white shadow-[0_0_40px_rgba(147,51,234,0.7)] hover:shadow-[0_0_60px_rgba(147,51,234,1)] hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer border border-purple-400/30 animate-fade-in"
+              title="Click to play live channel stream"
+            >
+              {/* Ripple Ring effects */}
+              <span className="absolute inset-0 rounded-full bg-purple-500/40 animate-ping opacity-75" />
+              <span className="absolute -inset-3 rounded-full border border-purple-500/10 animate-pulse pointer-events-none" />
+              <Play className="w-10 h-10 fill-current text-white ml-1 transition-transform group-hover:scale-115" />
+            </button>
+          </div>
+        )}
 
         {/* Double-tap / Seek Gesture Invisible Active overlay regions (leaves room for the bottom bar) */}
         {!isLoading && !errorText && (
@@ -674,7 +682,7 @@ export default function VideoPlayer({
         )}
 
         {/* Dedicated Fullscreen Overlay button - Top Left */}
-        {channel && !errorText && (
+        {hasClickedPlayOverlay && channel && !errorText && (
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -711,7 +719,7 @@ export default function VideoPlayer({
         {/* Smooth integrated Auto-hiding Bottom Control Bar */}
         <div 
           className={`absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/95 via-black/75 to-transparent flex items-end px-4 pb-3 select-none z-20 transition-all duration-300 ${
-            showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 pointer-events-none"
+            showControls && hasClickedPlayOverlay ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 pointer-events-none"
           }`}
           onClick={(e) => e.stopPropagation()}
         >
@@ -764,41 +772,14 @@ export default function VideoPlayer({
 
             {/* Right Hand Controls Side */}
             <div className="flex items-center gap-4 relative">
-              {/* Playback speed Gear icon */}
-              <div className="relative">
-                <button 
-                  onClick={() => setShowSettingsMenu(!showSettingsMenu)}
-                  className={`text-stone-100 hover:text-purple-400 p-1 transition-all duration-300 flex items-center justify-center cursor-pointer ${
-                    showSettingsMenu ? "rotate-45 text-purple-400" : ""
-                  }`}
-                  title="Playback Speed Settings"
-                >
-                  <Settings className="w-5 h-5" />
-                </button>
-
-                {/* Dropup Playback rate speed settings selector */}
-                {showSettingsMenu && (
-                  <div className="absolute right-0 bottom-full mb-3 bg-[#0B0C10]/95 border border-white/10 rounded-xl p-1.5 w-32 shadow-2xl z-30 backdrop-blur-md flex flex-col gap-0.5">
-                    <p className="text-[9px] font-mono font-bold text-stone-400 px-2 py-1 uppercase tracking-widest border-b border-white/[0.06] mb-1">
-                      Speed Rate
-                    </p>
-                    {[0.5, 1, 1.5, 2].map((rate) => (
-                      <button
-                        key={rate}
-                        onClick={() => handleSpeedChange(rate)}
-                        className={`text-left text-xs px-2 py-1.5 rounded-lg transition duration-150 flex items-center justify-between font-medium cursor-pointer ${
-                          playbackRate === rate 
-                            ? "bg-purple-600/20 text-purple-300 font-bold" 
-                            : "text-stone-300 hover:bg-white/5 hover:text-white"
-                        }`}
-                      >
-                        <span>{rate === 1 ? "Normal" : `${rate}x`}</span>
-                        {playbackRate === rate && <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* Fullscreen Toggle */}
+              <button
+                onClick={toggleFullscreen}
+                className="text-stone-100 hover:text-purple-400 p-1 transition-colors flex items-center justify-center cursor-pointer"
+                title="Fullscreen (f)"
+              >
+                {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+              </button>
 
               {/* Video Zoom Toggle */}
               <button
@@ -820,15 +801,6 @@ export default function VideoPlayer({
                 title="Theater Mode (t)"
               >
                 <Tv className="w-5 h-5" />
-              </button>
-
-              {/* Fullscreen Toggle */}
-              <button
-                onClick={toggleFullscreen}
-                className="text-stone-100 hover:text-purple-400 p-1 transition-colors flex items-center justify-center cursor-pointer"
-                title="Fullscreen (f)"
-              >
-                {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
               </button>
             </div>
           </div>
