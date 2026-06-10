@@ -52,6 +52,7 @@ export default function VideoPlayer({
   const [errorText, setErrorText] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
   const [hasClickedPlayOverlay, setHasClickedPlayOverlay] = useState(false);
+  const isFirstRender = useRef(true);
   
   // Custom YouTube-like features states
   const [seekOverlay, setSeekOverlay] = useState<{ show: boolean; text: string; side: "left" | "right" }>({
@@ -118,11 +119,19 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
+    // Determine if we should autoplay this stream load
+    const autoplay = !isFirstRender.current;
+    if (isFirstRender.current) {
+      setHasClickedPlayOverlay(false);
+      isFirstRender.current = false;
+    } else {
+      setHasClickedPlayOverlay(true);
+    }
+
     // Reset player state
     setIsLoading(true);
     setErrorText(null);
     setIsPlaying(false);
-    setHasClickedPlayOverlay(false);
 
     let active = true;
 
@@ -148,7 +157,16 @@ export default function VideoPlayer({
         const onLoadedMetadata = () => {
           if (!active) return;
           setIsLoading(false);
-          setIsPlaying(false);
+          if (autoplay) {
+            video.play()
+              .then(() => setIsPlaying(true))
+              .catch((err) => {
+                console.log("Autoplay blocked:", err);
+                setIsPlaying(false);
+              });
+          } else {
+            setIsPlaying(false);
+          }
         };
 
         const onError = () => {
@@ -198,7 +216,16 @@ export default function VideoPlayer({
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!active) return;
           setIsLoading(false);
-          setIsPlaying(false);
+          if (autoplay) {
+            video.play()
+              .then(() => setIsPlaying(true))
+              .catch((err) => {
+                console.log("Autoplay failed Hls:", err);
+                setIsPlaying(false);
+              });
+          } else {
+            setIsPlaying(false);
+          }
         });
 
         hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
