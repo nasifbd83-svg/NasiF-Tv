@@ -214,7 +214,7 @@ export default function App() {
 
   // Derive unique categories from active channel list
   const categories = useMemo(() => {
-    return ["All", "Bangladesh", "Kolkata", "Sports"];
+    return ["All", "Favorites", "Bangladesh", "Kolkata", "Sports"];
   }, []);
 
   // Filter channels based on Search Query and Selected Tab / Category
@@ -222,7 +222,11 @@ export default function App() {
     return channels.filter((c) => {
       // Tab Category filter
       if (activeTab !== "All") {
-        if (c.group !== activeTab) return false;
+        if (activeTab === "Favorites") {
+          if (!favorites.includes(c.id)) return false;
+        } else {
+          if (c.group !== activeTab) return false;
+        }
       }
 
       // Search Query filter
@@ -235,7 +239,7 @@ export default function App() {
 
       return true;
     });
-  }, [channels, activeTab, searchQuery]);
+  }, [channels, activeTab, searchQuery, favorites]);
 
   // Navigation Arrows click controllers
   const playNext = useCallback(() => {
@@ -484,7 +488,11 @@ export default function App() {
               {categories.map((tab) => {
                 // Custom human-friendly label mapping for standard tabs
                 let tabLabel = tab;
-                const count = tab === "All" ? channels.length : channels.filter(c => c.group === tab).length;
+                const count = tab === "All" 
+                  ? channels.length 
+                  : tab === "Favorites"
+                    ? favorites.length
+                    : channels.filter(c => c.group === tab).length;
                 tabLabel = `${tab} (${count})`;
 
                 const isActive = activeTab === tab;

@@ -673,6 +673,20 @@ export default function VideoPlayer({
           </div>
         )}
 
+        {/* Dedicated Fullscreen Overlay button - Top Left */}
+        {channel && !errorText && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFullscreen();
+            }}
+            className="absolute top-4 left-4 bg-black/60 hover:bg-purple-650 text-white p-2 md:p-2.5 rounded-full backdrop-blur-md border border-white/10 hover:border-purple-500/50 transition-all duration-300 z-20 shadow-lg hover:scale-115 active:scale-95 cursor-pointer flex items-center justify-center"
+            title="Toggle Fullscreen"
+          >
+            {isFullscreen ? <Minimize className="w-4.5 h-4.5" /> : <Maximize className="w-4.5 h-4.5" />}
+          </button>
+        )}
+
         {/* Custom Navigation Arrows overlaid on the sides of the video */}
         {onPlayPrev && !isFullscreen && (
           <button 
